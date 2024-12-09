@@ -755,18 +755,28 @@ async function readFirstNBytes(path, n) {
 function loadUrl(url){
     if(url.startsWith('https')){
         (url.startsWith('https') ? https : http).get(url, res => {
-            res.once('readable', () => {
+            let retryRead = false;
+            let cb = () => {
                 let chunk = res.read(196); //mp2t magic number extends to 196, ignoring that the next highest is 58 (ASF) then like 36
-                res.destroy();
-                
-                context = 'url';
-                fullpath = null;
-                loadedData = null;
-                curUrl = url;
-                //TODO: maybe abstract this process
-                let mime = getMimeType(chunk);
-                load(mime, url);
-            });
+                if (!chunk) { // workaround in case response has no data unavailable on the first read (eg when requesting from instagram URLs)
+                    retryRead = true;
+                    res.once('readable', cb);
+                } else {
+                    res.destroy();
+                    context = 'url';
+                    fullpath = null;
+                    loadedData = null;
+                    curUrl = url;
+                    //TODO: maybe abstract this process
+                    let mime = getMimeType(chunk);
+                    if (retryRead) { // if a retry was necessary, let's get the data directly to try avoid anymore trouble 😬
+                        getData(url, (d) => { load(mime, d, isData = true) });
+                    } else {
+                        load(mime, url);
+                    }
+                }
+            }
+            res.once('readable', cb);
         });
     } else if(url.startsWith('data')) {
         context = 'uri';
